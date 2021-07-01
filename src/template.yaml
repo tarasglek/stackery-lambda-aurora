@@ -1,0 +1,198 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Outputs:
+  DeploymentHistoryTag:
+    Description: Stackery Deployment History Tag
+    Value: DCX9GY
+Parameters:
+  DefaultVPCId:
+    Default: vpc-0585d5bc83a886fb0
+    Description: AWS account-specific default VPC ID (injected by Stackery at deployment
+      time)
+    Type: AWS::EC2::VPC::Id
+  DefaultVPCSubnets:
+    Default: subnet-07a83afb1f2c49707,subnet-02ab189a9c4ee0e2f,subnet-0ef7387e453260872
+    Description: AWS account-specific default VPC subnets (injected by Stackery at
+      deployment time)
+    Type: List<AWS::EC2::Subnet::Id>
+  EnvironmentAPIGatewayStageName:
+    Default: stackery
+    Description: Environment name used for API Gateway Stage names (injected by Stackery
+      at deployment time)
+    Type: String
+  EnvironmentTagName:
+    Default: stackery
+    Description: Environment Name (injected by Stackery at deployment time)
+    Type: String
+  StackTagName:
+    Default: xray1
+    Description: Stack Name (injected by Stackery at deployment time)
+    Type: String
+Resources:
+  DeploymentMarkerTagDCX9GY:
+    Type: AWS::CloudFormation::WaitConditionHandle
+  Function:
+    DependsOn: DeploymentMarkerTagDCX9GY
+    Properties:
+      CodeUri: src/Function
+      Description:
+        Fn::Sub:
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Function ${ResourceName}
+        - ResourceName: Function
+      Environment:
+        Variables:
+          DB_ADDRESS:
+            Fn::GetAtt:
+            - db2
+            - Endpoint.Address
+          DB_ARN:
+            Fn::Sub: arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${db2}
+          DB_ID:
+            Ref: db2
+          DB_PORT:
+            Fn::GetAtt:
+            - db2
+            - Endpoint.Port
+          DB_ROOT_USER_SECRET_ARN:
+            Ref: db2RootUserSecret
+      Events:
+        api1GET:
+          Properties:
+            Method: GET
+            Path: /
+            RestApiId:
+              Ref: api1
+          Type: Api
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-Function
+      Handler: handler.handler
+      MemorySize: 128
+      Policies:
+      - AWSXrayWriteOnlyAccess
+      - AWSSecretsManagerGetSecretValuePolicy:
+          SecretArn:
+            Ref: db2RootUserSecret
+      - Statement:
+        - Action:
+          - rds-data:BatchExecuteStatement
+          - rds-data:BeginTransaction
+          - rds-data:CommitTransaction
+          - rds-data:ExecuteStatement
+          - rds-data:RollbackTransaction
+          Effect: Allow
+          Resource:
+          - Fn::Sub: arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${db2}
+      Runtime: python3.8
+      Timeout: 30
+      Tracing: Active
+    Type: AWS::Serverless::Function
+  api1:
+    DependsOn: DeploymentMarkerTagDCX9GY
+    Properties:
+      Cors:
+        AllowHeaders: '''Authorization,Content-Type'''
+        AllowOrigin: '''*'''
+      DefinitionBody:
+        info: {}
+        paths:
+          /:
+            get:
+              responses: {}
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri:
+                  Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Function.Arn}/invocations
+        swagger: "2.0"
+      EndpointConfiguration: REGIONAL
+      Name:
+        Fn::Sub:
+        - ${ResourceName} From Stack ${StackTagName} Environment ${EnvironmentTagName}
+        - ResourceName: api1
+      StageName:
+        Ref: EnvironmentAPIGatewayStageName
+      TracingEnabled: true
+    Type: AWS::Serverless::Api
+  db2:
+    DependsOn: DeploymentMarkerTagDCX9GY
+    Properties:
+      BackupRetentionPeriod: 1
+      DBSubnetGroupName:
+        Ref: db2SubnetGroup
+      EnableHttpEndpoint: true
+      Engine: aurora-mysql
+      EngineMode: serverless
+      MasterUserPassword:
+        Fn::Sub: '{{resolve:secretsmanager:${db2RootUserSecret}:SecretString:password}}'
+      MasterUsername:
+        Fn::Sub: '{{resolve:secretsmanager:${db2RootUserSecret}:SecretString:username}}'
+      ScalingConfiguration:
+        AutoPause: false
+        MaxCapacity: 2
+        MinCapacity: 2
+      StorageEncrypted: true
+      VpcSecurityGroupIds:
+      - Ref: db2SecurityGroup
+    Type: AWS::RDS::DBCluster
+  db2RootUserSecret:
+    DependsOn: DeploymentMarkerTagDCX9GY
+    Properties:
+      Description:
+        Fn::Sub:
+        - Root user login info for Stack ${StackTagName} Environment ${EnvironmentTagName}
+          Database ${ResourceName}
+        - ResourceName: db2
+      GenerateSecretString:
+        ExcludeCharacters: '"@/\'
+        GenerateStringKey: password
+        PasswordLength: 16
+        SecretStringTemplate: '{"username": "root"}'
+      Name:
+        Fn::Sub: /${EnvironmentTagName}/${StackTagName}/db2/RootUser
+    Type: AWS::SecretsManager::Secret
+  db2RootUserSecretAttachment:
+    DependsOn: DeploymentMarkerTagDCX9GY
+    Properties:
+      SecretId:
+        Ref: db2RootUserSecret
+      TargetId:
+        Ref: db2
+      TargetType: AWS::RDS::DBCluster
+    Type: AWS::SecretsManager::SecretTargetAttachment
+  db2SecurityGroup:
+    DependsOn: DeploymentMarkerTagDCX9GY
+    Properties:
+      GroupDescription: Database Security Group
+      SecurityGroupIngress:
+        CidrIp: 0.0.0.0/0
+        FromPort: 3306
+        IpProtocol: tcp
+        ToPort: 3306
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub:
+          - Stack ${StackTagName} Environment ${EnvironmentTagName} Database ${ResourceName}
+            VPC Security Group
+          - ResourceName: db2
+      VpcId:
+        Ref: DefaultVPCId
+    Type: AWS::EC2::SecurityGroup
+  db2SubnetGroup:
+    DependsOn: DeploymentMarkerTagDCX9GY
+    Properties:
+      DBSubnetGroupDescription:
+        Fn::Sub:
+        - Stack ${StackTagName} Environment ${EnvironmentTagName} Database ${ResourceName}
+          VPC Subnets
+        - ResourceName: db2
+      SubnetIds:
+        Ref: DefaultVPCSubnets
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub:
+          - Stack ${StackTagName} Environment ${EnvironmentTagName} Database ${ResourceName}
+            VPC Subnets
+          - ResourceName: db2
+    Type: AWS::RDS::DBSubnetGroup
+Transform: AWS::Serverless-2016-10-31
