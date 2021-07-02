@@ -68,7 +68,7 @@ Resources:
   db2:
     Type: AWS::RDS::DBCluster
     Properties:
-      BackupRetentionPeriod: 0
+      BackupRetentionPeriod: 1
       DBSubnetGroupName: !Ref db2SubnetGroup
       Engine: aurora-mysql
       EngineMode: serverless
