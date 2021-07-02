@@ -1,2 +1,2 @@
-boto3
-PyMySQL
+boto3==1.17.104
+aws-xray-sdk==2.4.3

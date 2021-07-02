@@ -76,7 +76,7 @@ Resources:
       MasterUserPassword: !Sub '{{resolve:secretsmanager:${db2RootUserSecret}:SecretString:password}}'
       EnableHttpEndpoint: true
       ScalingConfiguration:
-        AutoPause: false
+        AutoPause: true
         MinCapacity: 2
         MaxCapacity: 2
       StorageEncrypted: true
